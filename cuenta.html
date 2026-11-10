@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#f6f5f1">
+    <meta name="description" content="Solicita un presupuesto de impresión 3D y consulta tus peticiones desde tu cuenta Forma3D.">
+    <title>Mi cuenta — Forma3D</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/styles.css">
+    <script type="module" src="js/dashboard.js"></script>
+</head>
+<body>
+    <header class="shell topbar">
+        <a class="brand" href="index.html" aria-label="Forma3D, inicio"><span class="brand-mark">f.</span>forma3d</a>
+        <nav class="nav-links" aria-label="Navegación principal">
+            <a href="productos.html#productos">Productos</a>
+            <a href="proceso.html#proceso">Cómo funciona</a>
+            <a class="button button-accent" href="cuenta.html" aria-current="page">Mi cuenta</a>
+        </nav>
+    </header>
+
+    <main class="shell account-page">
+        <section class="account-intro">
+            <span class="eyebrow">Tu espacio Forma3D</span>
+            <h1 id="dashboard-title">Peticiones y presupuestos</h1>
+            <p id="account-email" class="account-email"></p>
+            <p id="feedback" class="feedback" role="status" aria-live="polite" hidden></p>
+        </section>
+
+        <section id="auth-panel" class="auth-card" aria-labelledby="auth-heading">
+            <h2 id="auth-heading">Inicia sesión</h2>
+            <p id="auth-intro">Entra para enviar tu modelo 3D y consultar tus presupuestos.</p>
+            <form id="auth-form">
+                <label>Correo electrónico
+                    <input name="email" type="email" autocomplete="email" required>
+                </label>
+                <label>Contraseña
+                    <input name="password" type="password" autocomplete="current-password" minlength="8" required>
+                </label>
+                <button id="auth-submit" class="button button-accent" type="submit">Entrar</button>
+            </form>
+            <button id="mode-button" class="text-link mode-button" type="button">Crear una cuenta</button>
+        </section>
+
+        <section id="dashboard" hidden>
+            <div class="dashboard-toolbar">
+                <p>Sesión iniciada como <strong id="account-email-copy"></strong></p>
+                <div class="dashboard-actions">
+                    <button id="refresh-requests" class="button button-secondary" type="button">Actualizar</button>
+                    <button id="sign-out" class="button button-secondary" type="button">Cerrar sesión</button>
+                </div>
+            </div>
+
+            <section id="customer-panel" class="new-request-card" aria-labelledby="request-heading" hidden>
+                <div>
+                    <span class="eyebrow">Impresión 3D a medida</span>
+                    <h2 id="request-heading">Pide tu presupuesto</h2>
+                    <p>Adjunta tu modelo 3D (STL, 3MF, OBJ, FBX, GLB, GLTF, STEP, STP, IGES, IGS, PLY, AMF, DAE o BLEND) de hasta 50 MB.</p>
+                </div>
+                <form id="request-form">
+                    <label>Archivo del modelo 3D
+                        <input name="model" type="file" accept=".stl,.3mf,.obj,.fbx,.glb,.gltf,.step,.stp,.iges,.igs,.ply,.amf,.dae,.blend" required>
+                    </label>
+                    <label>¿Qué necesitas fabricar?
+                        <textarea name="description" rows="4" maxlength="2000" placeholder="Indica medidas, material, colores o cualquier detalle importante." required></textarea>
+                    </label>
+                    <button class="button button-accent" type="submit">Enviar petición</button>
+                </form>
+            </section>
+
+            <section id="admin-notice" class="admin-notice" hidden>
+                <span class="eyebrow">Panel de administración</span>
+                <p>Consulta las peticiones de todos los clientes, envía presupuestos y actualiza el estado de fabricación. Los pedidos finalizados y presupuestos rechazados quedan en el historial.</p>
+                <form id="role-form" class="role-form">
+                    <h2>Cambiar rol de usuario</h2>
+                    <label>Correo de la cuenta
+                        <input name="email" type="email" autocomplete="off" placeholder="cliente@ejemplo.com" required>
+                    </label>
+                    <label>Rol
+                        <select name="role" required>
+                            <option value="customer">Cliente</option>
+                            <option value="admin">Administrador</option>
+                        </select>
+                    </label>
+                    <button class="button button-accent" type="submit">Guardar cambios</button>
+                </form>
+            </section>
+
+            <section class="requests-section" aria-labelledby="current-heading">
+                <div class="section-heading">
+                    <div><span class="eyebrow">En curso</span><h2 id="current-heading">Peticiones actuales</h2></div>
+                    <label class="status-filter">Filtrar por estado
+                        <select id="current-status-filter">
+                            <option value="all">Todos los estados</option>
+                            <option value="pending">Pendiente de presupuesto</option>
+                            <option value="quoted">Presupuesto enviado</option>
+                            <option value="accepted">Presupuesto aceptado</option>
+                            <option value="in_progress">En fabricación</option>
+                        </select>
+                    </label>
+                </div>
+                <div id="current-request-list" class="request-list">
+                    <p class="empty-state">Cargando peticiones…</p>
+                </div>
+            </section>
+
+            <section class="requests-section history-section" aria-labelledby="history-heading">
+                <div class="section-heading">
+                    <div><span class="eyebrow">Archivo</span><h2 id="history-heading">Historial</h2></div>
+                    <label class="status-filter">Filtrar por estado
+                        <select id="history-status-filter">
+                            <option value="all">Todos los estados</option>
+                            <option value="completed">Finalizada</option>
+                            <option value="rejected">Presupuesto rechazado</option>
+                        </select>
+                    </label>
+                </div>
+                <div id="history-request-list" class="request-list">
+                    <p class="empty-state">Cargando historial…</p>
+                </div>
+            </section>
+        </section>
+    </main>
+
+    <footer class="shell">
+        <div class="footer-inner">
+            <a class="brand" href="index.html" aria-label="Forma3D, inicio"><span class="brand-mark">f.</span>forma3d</a>
+            <p class="copyright">© 2026 Forma3D. Hecho con imaginación.</p>
+            <div class="footer-links"><a href="productos.html#productos">Productos</a><a href="proceso.html#proceso">Cómo funciona</a></div>
+        </div>
+    </footer>
+</body>
+</html>
