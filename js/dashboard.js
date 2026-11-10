@@ -226,6 +226,9 @@ function requestCardMarkup(request, fileUrl, isAdmin) {
     const resendAdminNoticeButton = !isAdmin && ["accepted", "rejected"].includes(request.status)
         ? `<button class="button button-secondary resend-notice" type="button" data-notify-admin="${escapeHtml(request.id)}">Reenviar aviso al administrador</button>`
         : "";
+    const resendCustomerNoticeButton = isAdmin && request.status === "quoted"
+        ? `<button class="button button-secondary resend-notice" type="button" data-notify-customer="${escapeHtml(request.id)}">Reenviar presupuesto por correo</button>`
+        : "";
     const quoteForm = isAdmin && request.status === "pending"
         ? `<form class="quote-form" data-quote-form="${escapeHtml(request.id)}">
                 <label>Precio (€)<input name="amount" type="number" min="0.01" step="0.01" required></label>
@@ -274,6 +277,7 @@ function requestCardMarkup(request, fileUrl, isAdmin) {
         <a class="text-link model-download" href="${escapeHtml(fileUrl)}" target="_blank" rel="noopener">Descargar modelo 3D ↗</a>
         ${acceptButton}
         ${resendAdminNoticeButton}
+        ${resendCustomerNoticeButton}
         ${quoteForm}
         ${statusForm}
     </article>`;
@@ -308,6 +312,9 @@ function renderRequestList(container, requests, selectedStatus, emptyMessage) {
     container.querySelectorAll("[data-notify-admin]").forEach(button => {
         button.addEventListener("click", () => resendAdminNotification(button));
     });
+    container.querySelectorAll("[data-notify-customer]").forEach(button => {
+        button.addEventListener("click", () => resendCustomerNotification(button));
+    });
     container.querySelectorAll("[data-quote-form]").forEach(form => {
         form.addEventListener("submit", event => sendQuote(event, form));
     });
@@ -323,15 +330,39 @@ async function notifyRequestByEmail(requestId, event = "admin_update") {
         });
         if (error) {
             const context = error.context;
-            if (context instanceof Response) {
-                const responseBody = await context.clone().json().catch(() => null);
-                if (typeof responseBody?.error === "string") {
-                    return { sent: false, error: responseBody.error };
+            if (context && typeof context.status === "number" && typeof context.text === "function") {
+                let responseText;
+                try {
+                    responseText = await (typeof context.clone === "function" ? context.clone() : context).text();
+                } catch (readError) {
+                    const detail = readError instanceof Error ? readError.message : String(readError);
+                    return {
+                        sent: false,
+                        error: `La función de correo respondió con HTTP ${context.status}, pero no se pudo leer su respuesta: ${detail}`
+                    };
+                }
+                if (responseText.trim()) {
+                    let responseBody;
+                    try {
+                        responseBody = JSON.parse(responseText);
+                    } catch {
+                        responseBody = null;
+                    }
+                    if (typeof responseBody?.error === "string") {
+                        return { sent: false, error: responseBody.error };
+                    }
+                    return {
+                        sent: false,
+                        error: `La función de correo respondió con HTTP ${context.status}: ${responseText.trim().slice(0, 300)}`
+                    };
                 }
                 return {
                     sent: false,
                     error: `La función de correo respondió con HTTP ${context.status}. Comprueba que esté desplegada y configurada en Supabase.`
                 };
+            }
+            if (typeof context?.message === "string") {
+                return { sent: false, error: context.message };
             }
         }
         return {
@@ -765,6 +796,24 @@ async function resendAdminNotification(button) {
         }
     } catch (error) {
         showMessage(`No se pudo reenviar el aviso: ${error.message}`, true);
+    } finally {
+        button.disabled = false;
+    }
+}
+
+async function resendCustomerNotification(button) {
+    button.disabled = true;
+    showMessage("");
+    try {
+        const notification = await notifyRequestByEmail(button.dataset.notifyCustomer);
+        showMessage(notification.sent
+            ? "Presupuesto reenviado por correo."
+            : notification.error
+                ? `No se pudo reenviar el presupuesto: ${notification.error}`
+                : "No se confirmó el envío del presupuesto.",
+        !notification.sent);
+    } catch (error) {
+        showMessage(`No se pudo reenviar el presupuesto: ${error instanceof Error ? error.message : String(error)}`, true);
     } finally {
         button.disabled = false;
     }
