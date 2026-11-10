@@ -1,5 +1,6 @@
 import { supabase } from "./supabase.js";
 
+const publishedAccountUrl = "https://ivurba.github.io/Forma3D/cuenta.html";
 const bucketName = "3d-models";
 const maxFileSize = 50 * 1024 * 1024;
 const allowedExtensions = new Set([
@@ -222,6 +223,9 @@ function requestCardMarkup(request, fileUrl, isAdmin) {
                 <button class="button button-secondary" type="button" data-reject-quote="${escapeHtml(request.id)}">Rechazar presupuesto</button>
            </div>`
         : "";
+    const resendAdminNoticeButton = !isAdmin && ["accepted", "rejected"].includes(request.status)
+        ? `<button class="button button-secondary resend-notice" type="button" data-notify-admin="${escapeHtml(request.id)}">Reenviar aviso al administrador</button>`
+        : "";
     const quoteForm = isAdmin && request.status === "pending"
         ? `<form class="quote-form" data-quote-form="${escapeHtml(request.id)}">
                 <label>Precio (€)<input name="amount" type="number" min="0.01" step="0.01" required></label>
@@ -269,6 +273,7 @@ function requestCardMarkup(request, fileUrl, isAdmin) {
         ${note}
         <a class="text-link model-download" href="${escapeHtml(fileUrl)}" target="_blank" rel="noopener">Descargar modelo 3D ↗</a>
         ${acceptButton}
+        ${resendAdminNoticeButton}
         ${quoteForm}
         ${statusForm}
     </article>`;
@@ -300,6 +305,9 @@ function renderRequestList(container, requests, selectedStatus, emptyMessage) {
     container.querySelectorAll("[data-reject-quote]").forEach(button => {
         button.addEventListener("click", () => rejectQuote(button));
     });
+    container.querySelectorAll("[data-notify-admin]").forEach(button => {
+        button.addEventListener("click", () => resendAdminNotification(button));
+    });
     container.querySelectorAll("[data-quote-form]").forEach(form => {
         form.addEventListener("submit", event => sendQuote(event, form));
     });
@@ -308,14 +316,27 @@ function renderRequestList(container, requests, selectedStatus, emptyMessage) {
     });
 }
 
-async function sendCustomerEmailNotification(requestId) {
+async function notifyRequestByEmail(requestId, event = "admin_update") {
     try {
         const { data, error } = await supabase.functions.invoke("notify-request", {
-            body: { requestId }
+            body: { requestId, event }
         });
+        if (error) {
+            const context = error.context;
+            if (context instanceof Response) {
+                const responseBody = await context.clone().json().catch(() => null);
+                if (typeof responseBody?.error === "string") {
+                    return { sent: false, error: responseBody.error };
+                }
+                return {
+                    sent: false,
+                    error: `La función de correo respondió con HTTP ${context.status}. Comprueba que esté desplegada y configurada en Supabase.`
+                };
+            }
+        }
         return {
             sent: Boolean(data?.sent),
-            error: error ? error.message : ""
+            error: error ? error.message : typeof data?.error === "string" ? data.error : ""
         };
     } catch (error) {
         return {
@@ -471,7 +492,9 @@ forgotPasswordButton.addEventListener("click", async () => {
 
     forgotPasswordButton.disabled = true;
     try {
-        const redirectTo = `${window.location.origin}${window.location.pathname}`;
+        const redirectUrl = new URL(publishedAccountUrl);
+        redirectUrl.searchParams.set("flow", "recovery");
+        const redirectTo = redirectUrl.toString();
         const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
         if (error) throw error;
         showMessage("Si existe una cuenta con ese correo, recibirás un enlace para restablecer la contraseña.");
@@ -659,7 +682,7 @@ async function sendQuote(event, form) {
             .eq("id", form.dataset.quoteForm);
         if (error) throw error;
         const user = await getAuthenticatedUser();
-        const notification = await sendCustomerEmailNotification(form.dataset.quoteForm);
+        const notification = await notifyRequestByEmail(form.dataset.quoteForm);
         if (await showDashboard(user)) {
             const message = notification.error
                 ? `Presupuesto guardado en el panel. El correo no se pudo enviar: ${notification.error}`
@@ -684,8 +707,14 @@ async function acceptQuote(button) {
         });
         if (error) throw error;
         const user = await getAuthenticatedUser();
+        const notification = await notifyRequestByEmail(button.dataset.acceptQuote, "customer_response");
         if (await showDashboard(user)) {
-            showMessage("Presupuesto aceptado. El administrador ya puede continuar con la fabricación.");
+            showMessage(notification.sent
+                ? "Presupuesto aceptado. Hemos avisado al administrador por correo."
+                : notification.error
+                    ? `Presupuesto aceptado. No se pudo avisar al administrador por correo: ${notification.error}`
+                    : "Presupuesto aceptado. No se confirmó el envío del aviso al administrador.",
+            !notification.sent);
         }
     } catch (error) {
         showMessage(`No se pudo aceptar el presupuesto: ${error.message}`, true);
@@ -706,11 +735,36 @@ async function rejectQuote(button) {
         });
         if (error) throw error;
         const user = await getAuthenticatedUser();
+        const notification = await notifyRequestByEmail(button.dataset.rejectQuote, "customer_response");
         if (await showDashboard(user)) {
-            showMessage("Presupuesto rechazado. La petición ya está en tu historial.");
+            showMessage(notification.sent
+                ? "Presupuesto rechazado. Hemos avisado al administrador por correo."
+                : notification.error
+                    ? `Presupuesto rechazado. No se pudo avisar al administrador por correo: ${notification.error}`
+                    : "Presupuesto rechazado. No se confirmó el envío del aviso al administrador.",
+            !notification.sent);
         }
     } catch (error) {
         showMessage(`No se pudo rechazar el presupuesto: ${error.message}`, true);
+    } finally {
+        button.disabled = false;
+    }
+}
+
+async function resendAdminNotification(button) {
+    button.disabled = true;
+    showMessage("");
+    try {
+        const notification = await notifyRequestByEmail(button.dataset.notifyAdmin, "customer_response");
+        if (notification.sent) {
+            showMessage("Hemos reenviado el aviso al administrador por correo.");
+        } else {
+            showMessage(notification.error
+                ? `No se pudo enviar el aviso: ${notification.error}`
+                : "No se confirmó el envío del aviso al administrador.", true);
+        }
+    } catch (error) {
+        showMessage(`No se pudo reenviar el aviso: ${error.message}`, true);
     } finally {
         button.disabled = false;
     }
@@ -743,11 +797,11 @@ async function updateStatus(event, form) {
         const user = await getAuthenticatedUser();
         const notification = nextStatus === "pending"
             ? { sent: false, error: "" }
-            : await sendCustomerEmailNotification(form.dataset.statusForm);
+            : await notifyRequestByEmail(form.dataset.statusForm);
         if (await showDashboard(user)) {
             const successMessage = nextStatus === "completed"
                 ? "Pedido finalizado y movido al historial."
-                : `Estado actualizado: ${statusLabels[nextStatus].toLowerCase()}.`;
+                : `Estado actualizado: ${(statusLabels[nextStatus] ?? nextStatus).toLowerCase()}.`;
             const message = notification.error
                 ? `${successMessage} El correo no se pudo enviar: ${notification.error}`
                 : notification.sent
@@ -775,7 +829,14 @@ async function initialize() {
         showMessage(`No se pudo comprobar la sesión: ${error.message}`, true);
         return;
     }
-    const isRecoveryFlow = new URLSearchParams(window.location.hash.slice(1)).get("type") === "recovery";
+    const urlParams = new URLSearchParams(window.location.search);
+    const hashParams = new URLSearchParams(window.location.hash.slice(1));
+    const authError = urlParams.get("error_description") || hashParams.get("error_description");
+    if (authError) {
+        showMessage(`El enlace de recuperación no es válido o ha caducado: ${authError}`, true);
+        return;
+    }
+    const isRecoveryFlow = urlParams.get("flow") === "recovery" || hashParams.get("type") === "recovery";
     if (isRecoveryFlow) {
         setPasswordRecoveryMode(true);
     } else if (data.session) {

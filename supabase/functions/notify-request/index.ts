@@ -13,6 +13,10 @@ const statusLabels: Record<string, string> = {
     completed: "Finalizada",
     rejected: "Presupuesto rechazado"
 };
+const customerResponseLabels: Record<string, string> = {
+    accepted: "ha aceptado el presupuesto",
+    rejected: "ha rechazado el presupuesto"
+};
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
     return new Response(JSON.stringify(body), {
@@ -50,7 +54,15 @@ Deno.serve(async request => {
     const resendApiKey = Deno.env.get("RESEND_API_KEY");
     const fromEmail = Deno.env.get("FROM_EMAIL");
     if (!supabaseUrl || !anonKey || !serviceRoleKey || !resendApiKey || !fromEmail) {
-        return jsonResponse({ error: "Email notifications are not configured on the server." }, 500);
+        const missingSecrets = [
+            ["SUPABASE_URL", supabaseUrl],
+            ["SUPABASE_ANON_KEY", anonKey],
+            ["SUPABASE_SERVICE_ROLE_KEY", serviceRoleKey],
+            ["RESEND_API_KEY", resendApiKey],
+            ["FROM_EMAIL", fromEmail]
+        ].filter(([, value]) => !value).map(([name]) => name);
+        console.error("Email notification configuration is incomplete.", missingSecrets);
+        return jsonResponse({ error: `Missing Edge Function secrets: ${missingSecrets.join(", ")}.` }, 500);
     }
 
     const userClient = createClient(supabaseUrl, anonKey, {
@@ -59,6 +71,21 @@ Deno.serve(async request => {
     const { data: { user }, error: authError } = await userClient.auth.getUser();
     if (authError || !user) {
         return jsonResponse({ error: "The session is invalid or has expired." }, 401);
+    }
+
+    let body: { requestId?: unknown; event?: unknown };
+    try {
+        body = await request.json();
+    } catch {
+        return jsonResponse({ error: "A valid JSON body is required." }, 400);
+    }
+    if (typeof body.requestId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.requestId)) {
+        return jsonResponse({ error: "A valid request ID is required." }, 400);
+    }
+    const event = body.event ?? "admin_update";
+    if (event !== "admin_update" && event !== "customer_response") {
+        return jsonResponse({ error: "A valid notification event is required." }, 400);
     }
 
     const adminClient = createClient(supabaseUrl, serviceRoleKey, {
@@ -71,20 +98,6 @@ Deno.serve(async request => {
         .maybeSingle();
     if (profileError) {
         return jsonResponse({ error: "Could not verify the account role." }, 500);
-    }
-    if (profile?.role !== "admin") {
-        return jsonResponse({ error: "Administrator access required." }, 403);
-    }
-
-    let body: { requestId?: unknown };
-    try {
-        body = await request.json();
-    } catch {
-        return jsonResponse({ error: "A valid JSON body is required." }, 400);
-    }
-    if (typeof body.requestId !== "string" ||
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.requestId)) {
-        return jsonResponse({ error: "A valid request ID is required." }, 400);
     }
 
     const { data: modelRequest, error: requestError } = await adminClient
@@ -99,43 +112,71 @@ Deno.serve(async request => {
         return jsonResponse({ error: "Request not found." }, 404);
     }
 
-    const statusLabel = statusLabels[modelRequest.status];
-    if (!statusLabel) {
-        return jsonResponse({ sent: false, reason: "No customer notification is needed for this status." });
+    let recipientEmails: string[];
+    let subject: string;
+    let message: string;
+    let quoteDetails = "";
+    if (event === "admin_update") {
+        if (profile?.role !== "admin") {
+            return jsonResponse({ error: "Administrator access required." }, 403);
+        }
+        const statusLabel = statusLabels[modelRequest.status];
+        if (!statusLabel) {
+            return jsonResponse({ sent: false, reason: "No customer notification is needed for this status." });
+        }
+        const { data: customer, error: customerError } = await adminClient
+            .from("profiles")
+            .select("email")
+            .eq("id", modelRequest.user_id)
+            .single();
+        if (customerError) {
+            return jsonResponse({ error: "Could not load the customer's email." }, 500);
+        }
+        recipientEmails = [customer.email];
+        message = `La petición "${modelRequest.model_name}" ahora está en el estado: ${statusLabel}.`;
+
+        if (modelRequest.status === "quoted" && modelRequest.quote_amount !== null) {
+            const quote = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" })
+                .format(Number(modelRequest.quote_amount));
+            quoteDetails = `<p>Presupuesto: <strong>${quote}</strong></p>`;
+            message += ` Presupuesto: ${quote}.`;
+            if (typeof modelRequest.quote_note === "string" && modelRequest.quote_note) {
+                quoteDetails += `<p>${escapeHtml(modelRequest.quote_note)}</p>`;
+                message += ` ${modelRequest.quote_note}`;
+            }
+        }
+        subject = modelRequest.status === "quoted"
+            ? `Tienes un presupuesto para ${modelRequest.model_name}`
+            : `Actualización de tu petición: ${statusLabel}`;
+    } else {
+        if (profile?.role !== "customer" || modelRequest.user_id !== user.id) {
+            return jsonResponse({ error: "You cannot notify about this request." }, 403);
+        }
+        const responseLabel = customerResponseLabels[modelRequest.status];
+        if (!responseLabel) {
+            return jsonResponse({ error: "The request has no customer response to notify." }, 409);
+        }
+        const { data: administrators, error: administratorsError } = await adminClient
+            .from("profiles")
+            .select("email")
+            .eq("role", "admin");
+        if (administratorsError) {
+            return jsonResponse({ error: "Could not load administrator email addresses." }, 500);
+        }
+        recipientEmails = [...new Set(
+            administrators
+                .map(administrator => administrator.email?.trim())
+                .filter((email): email is string => Boolean(email))
+        )];
+        if (recipientEmails.length === 0) {
+            return jsonResponse({ error: "No administrator email address is configured in the profiles table." }, 500);
+        }
+        message = `El cliente ${user.email ?? user.id} ${responseLabel} para "${modelRequest.model_name}".`;
+        subject = `Cliente ${responseLabel}: ${modelRequest.model_name}`;
     }
 
-    const { data: customer, error: customerError } = await adminClient
-        .from("profiles")
-        .select("email")
-        .eq("id", modelRequest.user_id)
-        .single();
-    if (customerError) {
-        return jsonResponse({ error: "Could not load the customer's email." }, 500);
-    }
-
-    const modelName = String(modelRequest.model_name);
-    const safeModelName = escapeHtml(modelName);
-    const quote = modelRequest.status === "quoted" && modelRequest.quote_amount !== null
-        ? new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" })
-            .format(Number(modelRequest.quote_amount))
-        : "";
-    const note = typeof modelRequest.quote_note === "string" && modelRequest.quote_note
-        ? `<p>${escapeHtml(modelRequest.quote_note)}</p>`
-        : "";
-    const subject = quote
-        ? `Tienes un presupuesto para ${modelName}`
-        : `Actualización de tu petición: ${statusLabel}`;
-    const html = `<p>Hola:</p>
-        <p>La petición <strong>${safeModelName}</strong> ahora está en el estado: <strong>${statusLabel}</strong>.</p>
-        ${quote ? `<p>Presupuesto: <strong>${quote}</strong></p>${note}` : ""}
-        <p>Entra en tu cuenta de Forma3D para consultar los detalles.</p>`;
-    const text = [
-        "Hola:",
-        `La petición "${modelName}" ahora está en el estado: ${statusLabel}.`,
-        quote ? `Presupuesto: ${quote}` : "",
-        modelRequest.quote_note ?? "",
-        "Entra en tu cuenta de Forma3D para consultar los detalles."
-    ].filter(Boolean).join("\n\n");
+    const html = `<p>Hola:</p><p>${escapeHtml(message)}</p>${quoteDetails}`;
+    const text = `Hola:\n\n${message}`;
 
     let resendResponse: Response;
     try {
@@ -147,7 +188,7 @@ Deno.serve(async request => {
             },
             body: JSON.stringify({
                 from: fromEmail,
-                to: [customer.email],
+                to: recipientEmails,
                 subject,
                 html,
                 text
@@ -159,8 +200,11 @@ Deno.serve(async request => {
     }
 
     if (!resendResponse.ok) {
-        console.error("Email provider rejected the notification.", resendResponse.status);
-        return jsonResponse({ error: "The email provider did not accept the notification." }, 502);
+        const providerError = await resendResponse.text();
+        console.error("Email provider rejected the notification.", resendResponse.status, providerError);
+        return jsonResponse({
+            error: `The email provider rejected the message (HTTP ${resendResponse.status}). Check the Resend sender/domain settings.`
+        }, 502);
     }
 
     return jsonResponse({ sent: true });
