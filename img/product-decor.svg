@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 460" role="img" aria-labelledby="title desc">
+  <title id="title">Jarrón decorativo</title>
+  <desc id="desc">Ilustración de un jarrón acanalado color terracota sobre una base clara.</desc>
+  <rect width="700" height="460" fill="#e9e7df"/>
+  <circle cx="530" cy="106" r="95" fill="#dce5d8"/>
+  <path d="M206 365h288v19H206z" fill="#c7c4b8"/>
+  <path d="M320 121h60l-6 54c41 29 78 79 78 133 0 42-36 66-102 66s-102-24-102-66c0-54 37-104 78-133z" fill="#c65d3c"/>
+  <path d="M330 128h40v17h-40z" fill="#93402c"/>
+  <path d="M282 243c25-25 43-42 56-50m-72 80c33-32 58-54 76-64m-80 94c37-34 70-60 94-72m-85 99c34-28 68-48 103-61m-83 87c31-20 62-34 97-45m-67 57c25-10 48-17 73-23" fill="none" stroke="#e89979" stroke-linecap="round" stroke-width="7" opacity=".8"/>
+  <path d="M273 306c0-46 31-87 67-112m-54 165c37-31 80-50 128-58" fill="none" stroke="#a94a31" stroke-linecap="round" stroke-width="5" opacity=".65"/>
+</svg>

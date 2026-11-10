@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 460" role="img" aria-labelledby="title desc">
+  <title id="title">Prototipo geométrico</title>
+  <desc id="desc">Ilustración de un prototipo geométrico modular en color verde.</desc>
+  <rect width="700" height="460" fill="#e9e7df"/>
+  <circle cx="164" cy="145" r="92" fill="#f3d9ce"/>
+  <path d="m225 280 126-74 126 74-126 74z" fill="#7f9a79"/>
+  <path d="m225 280 126 74v-99l-126-73z" fill="#60785b"/>
+  <path d="m351 255 126-74v99l-126 74z" fill="#9eb097"/>
+  <path d="m281 247 70-41 70 41-70 41z" fill="#cbd6c5"/>
+  <path d="m281 247 70 41v66l-70-41z" fill="#879e81"/>
+  <path d="m351 288 70-41v66l-70 41z" fill="#adc0a6"/>
+  <path d="M205 379h290" stroke="#c7c4b8" stroke-linecap="round" stroke-width="12"/>
+  <path d="M307 226v25m88-25v25" stroke="#e85c36" stroke-linecap="round" stroke-width="5"/>
+</svg>

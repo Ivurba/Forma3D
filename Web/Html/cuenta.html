@@ -42,7 +42,17 @@
                 </label>
                 <button id="auth-submit" class="button button-accent" type="submit">Entrar</button>
             </form>
-            <button id="mode-button" class="text-link mode-button" type="button">Crear una cuenta</button>
+            <div id="auth-links" class="auth-links">
+                <button id="mode-button" class="text-link mode-button" type="button">Crear una cuenta</button>
+                <button id="forgot-password" class="text-link mode-button" type="button">¿Olvidaste tu contraseña?</button>
+            </div>
+            <form id="password-recovery-form" hidden>
+                <p>Escribe una contraseña nueva para tu cuenta.</p>
+                <label>Nueva contraseña
+                    <input name="password" type="password" autocomplete="new-password" minlength="8" required>
+                </label>
+                <button class="button button-accent" type="submit">Guardar contraseña</button>
+            </form>
         </section>
 
         <section id="dashboard" hidden>
@@ -63,7 +73,33 @@
                 <form id="request-form">
                     <label>Archivo del modelo 3D
                         <input name="model" type="file" accept=".stl,.3mf,.obj,.fbx,.glb,.gltf,.step,.stp,.iges,.igs,.ply,.amf,.dae,.blend" required>
+                        <small id="selected-file" class="field-help" aria-live="polite">Formatos 3D admitidos, hasta 50 MB.</small>
                     </label>
+                    <div class="request-fields">
+                        <label>Cantidad
+                            <input name="quantity" type="number" min="1" max="1000" step="1" value="1" required>
+                        </label>
+                        <label>Medidas aproximadas (mm)
+                            <input name="dimensions" type="text" maxlength="120" placeholder="Ancho × alto × fondo">
+                        </label>
+                        <label>Material preferido
+                            <select name="material">
+                                <option value="">Sin preferencia</option>
+                                <option value="PLA">PLA</option>
+                                <option value="PETG">PETG</option>
+                                <option value="ABS">ABS</option>
+                                <option value="TPU">TPU flexible</option>
+                                <option value="Resina">Resina</option>
+                                <option value="Otro">Otro / no estoy seguro</option>
+                            </select>
+                        </label>
+                        <label>Color preferido
+                            <input name="color" type="text" maxlength="60" placeholder="Por ejemplo, negro mate">
+                        </label>
+                        <label>Fecha deseada (orientativa)
+                            <input name="desired_date" type="date">
+                        </label>
+                    </div>
                     <label>¿Qué necesitas fabricar?
                         <textarea name="description" rows="4" maxlength="2000" placeholder="Indica medidas, material, colores o cualquier detalle importante." required></textarea>
                     </label>

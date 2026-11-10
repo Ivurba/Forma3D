@@ -109,12 +109,40 @@ create table if not exists public.requests (
     model_path text not null,
     model_name text not null,
     description text not null check (char_length(description) between 1 and 2000),
+    quantity integer not null default 1,
+    dimensions text,
+    material text,
+    color text,
+    desired_date date,
     status text not null default 'pending'
         check (status in ('pending', 'quoted', 'accepted', 'in_progress', 'completed', 'rejected')),
     quote_amount numeric(10, 2) check (quote_amount is null or quote_amount > 0),
     quote_note text check (quote_note is null or char_length(quote_note) <= 1000),
     created_at timestamptz not null default now()
 );
+
+alter table public.requests
+    add column if not exists quantity integer not null default 1,
+    add column if not exists dimensions text,
+    add column if not exists material text,
+    add column if not exists color text,
+    add column if not exists desired_date date;
+
+alter table public.requests drop constraint if exists requests_quantity_check;
+alter table public.requests
+    add constraint requests_quantity_check check (quantity between 1 and 1000);
+
+alter table public.requests drop constraint if exists requests_dimensions_check;
+alter table public.requests
+    add constraint requests_dimensions_check check (dimensions is null or char_length(dimensions) <= 120);
+
+alter table public.requests drop constraint if exists requests_material_check;
+alter table public.requests
+    add constraint requests_material_check check (material is null or char_length(material) <= 40);
+
+alter table public.requests drop constraint if exists requests_color_check;
+alter table public.requests
+    add constraint requests_color_check check (color is null or char_length(color) <= 60);
 
 alter table public.requests drop constraint if exists requests_status_check;
 alter table public.requests

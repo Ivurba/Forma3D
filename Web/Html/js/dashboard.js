@@ -10,10 +10,14 @@ const authPanel = document.querySelector("#auth-panel");
 const dashboard = document.querySelector("#dashboard");
 const authForm = document.querySelector("#auth-form");
 const requestForm = document.querySelector("#request-form");
+const recoveryForm = document.querySelector("#password-recovery-form");
 const feedback = document.querySelector("#feedback");
 const modeButton = document.querySelector("#mode-button");
+const forgotPasswordButton = document.querySelector("#forgot-password");
 const authSubmit = document.querySelector("#auth-submit");
 const authHeading = document.querySelector("#auth-heading");
+const fileInput = requestForm.elements.model;
+const selectedFileMessage = document.querySelector("#selected-file");
 const currentRequestList = document.querySelector("#current-request-list");
 const historyRequestList = document.querySelector("#history-request-list");
 const currentStatusFilter = document.querySelector("#current-status-filter");
@@ -71,6 +75,19 @@ function formatDate(value) {
     }).format(new Date(value));
 }
 
+function formatRequestedDate(value) {
+    if (!value) return "";
+    return new Intl.DateTimeFormat("es-ES", { dateStyle: "medium" })
+        .format(new Date(`${value}T12:00:00`));
+}
+
+function localDateString(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+}
+
 async function getAuthenticatedUser() {
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error) throw error;
@@ -84,10 +101,22 @@ function setAuthMode(mode) {
     authHeading.textContent = registering ? "Crea tu cuenta" : "Inicia sesión";
     authSubmit.textContent = registering ? "Crear cuenta" : "Entrar";
     modeButton.textContent = registering ? "Ya tengo cuenta" : "Crear una cuenta";
+    forgotPasswordButton.hidden = registering;
     document.querySelector("#auth-intro").textContent = registering
         ? "Regístrate para solicitar presupuestos y seguir tus pedidos."
         : "Entra para enviar tu modelo 3D y consultar tus presupuestos.";
     authForm.elements.password.autocomplete = registering ? "new-password" : "current-password";
+}
+
+function setPasswordRecoveryMode(enabled) {
+    authHeading.textContent = enabled ? "Restablece tu contraseña" : "Inicia sesión";
+    authForm.hidden = enabled;
+    document.querySelector("#auth-links").hidden = enabled;
+    recoveryForm.hidden = !enabled;
+    document.querySelector("#auth-intro").textContent = enabled
+        ? "Elige una contraseña nueva de al menos 8 caracteres."
+        : "Entra para enviar tu modelo 3D y consultar tus presupuestos.";
+    if (enabled) recoveryForm.elements.password.focus();
 }
 
 function setSignedOut() {
@@ -158,6 +187,27 @@ async function showDashboard(user) {
 
 function requestCardMarkup(request, fileUrl, isAdmin) {
     const status = statusLabels[request.status] ?? request.status;
+    const timeline = request.status === "rejected"
+        ? [["Solicitud recibida", "Presupuesto enviado", "Presupuesto rechazado"], 2]
+        : [
+            ["Solicitud recibida", "Presupuesto enviado", "Presupuesto aceptado", "En fabricación", "Finalizada"],
+            { pending: 0, quoted: 1, accepted: 2, in_progress: 3, completed: 4 }[request.status] ?? 0
+        ];
+    const [timelineLabels, currentTimelineStep] = timeline;
+    const timelineMarkup = `<ol class="status-timeline" aria-label="Progreso de la petición">${timelineLabels.map((label, index) => {
+        const current = currentTimelineStep === index;
+        const className = current ? "is-current" : index < currentTimelineStep ? "is-complete" : "";
+        return `<li class="${className}"${current ? ' aria-current="step"' : ""}><span>${escapeHtml(label)}</span></li>`;
+    }).join("")}</ol>`;
+    const requestDetails = [
+        ["Cantidad", `${request.quantity} ${request.quantity === 1 ? "unidad" : "unidades"}`],
+        ["Medidas", request.dimensions],
+        ["Material", request.material],
+        ["Color", request.color],
+        ["Fecha deseada", formatRequestedDate(request.desired_date)]
+    ].filter(([, value]) => value !== null && value !== undefined && value !== "");
+    const detailsMarkup = `<dl class="request-details">${requestDetails.map(([label, value]) => `
+        <div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`;
     const amount = request.quote_amount === null ? "" : `
         <p class="request-quote"><strong>Presupuesto:</strong> ${escapeHtml(formatPrice(request.quote_amount))}</p>`;
     const note = request.quote_note
@@ -188,7 +238,7 @@ function requestCardMarkup(request, fileUrl, isAdmin) {
         ["rejected", "Presupuesto rechazado"]
     ];
     const statusForm = isAdmin
-        ? `<form class="status-form" data-status-form="${escapeHtml(request.id)}">
+        ? `<form class="status-form" data-status-form="${escapeHtml(request.id)}" data-current-status="${escapeHtml(request.status)}">
                 <label>Estado de la petición
                     <select name="status">
                         ${requestStatuses.map(([value, label]) => {
@@ -212,6 +262,8 @@ function requestCardMarkup(request, fileUrl, isAdmin) {
             <span class="status-badge status-${escapeHtml(request.status)}">${escapeHtml(status)}</span>
         </div>
         ${customer}
+        ${timelineMarkup}
+        ${detailsMarkup}
         <p class="request-description">${escapeHtml(request.description)}</p>
         ${amount}
         ${note}
@@ -256,12 +308,29 @@ function renderRequestList(container, requests, selectedStatus, emptyMessage) {
     });
 }
 
+async function sendCustomerEmailNotification(requestId) {
+    try {
+        const { data, error } = await supabase.functions.invoke("notify-request", {
+            body: { requestId }
+        });
+        return {
+            sent: Boolean(data?.sent),
+            error: error ? error.message : ""
+        };
+    } catch (error) {
+        return {
+            sent: false,
+            error: error instanceof Error ? error.message : String(error)
+        };
+    }
+}
+
 async function loadRequests(profile) {
     currentRequestList.innerHTML = '<p class="empty-state">Cargando peticiones…</p>';
     historyRequestList.innerHTML = '<p class="empty-state">Cargando historial…</p>';
     let query = supabase
         .from("requests")
-        .select("id, user_id, model_path, model_name, description, status, quote_amount, quote_note, created_at, profiles!requests_user_id_fkey(email)")
+        .select("id, user_id, model_path, model_name, description, quantity, dimensions, material, color, desired_date, status, quote_amount, quote_note, created_at, profiles!requests_user_id_fkey(email)")
         .order("created_at", { ascending: false });
 
     if (profile.role !== "admin") {
@@ -301,7 +370,26 @@ async function loadRequests(profile) {
         return false;
     }
 
+    const previousRequests = new Map(currentRequests.map(request => [request.id, request]));
     currentRequests = requests.map((request, index) => ({ ...request, signedUrl: signedUrls[index] }));
+    if (profile.role === "customer") {
+        const changedRequests = currentRequests.flatMap(request => {
+            const previous = previousRequests.get(request.id);
+            if (!previous) return [];
+            if (request.status === "quoted" && previous.status !== "quoted") {
+                return [`Tienes un nuevo presupuesto para «${request.model_name}».`];
+            }
+            if (request.status !== previous.status) {
+                return [`«${request.model_name}» ahora está: ${statusLabels[request.status] ?? request.status}.`];
+            }
+            return [];
+        });
+        if (changedRequests.length > 0) {
+            showMessage(changedRequests.length === 1
+                ? changedRequests[0]
+                : `Hay ${changedRequests.length} actualizaciones en tus peticiones.`);
+        }
+    }
     currentRole = profile.role;
     renderRequestLists();
     return true;
@@ -372,6 +460,57 @@ modeButton.addEventListener("click", () => {
     setAuthMode(authMode === "login" ? "register" : "login");
 });
 
+forgotPasswordButton.addEventListener("click", async () => {
+    showMessage("");
+    const email = authForm.elements.email.value.trim();
+    if (!email) {
+        showMessage("Escribe tu correo electrónico y vuelve a pulsar «¿Olvidaste tu contraseña?».", true);
+        authForm.elements.email.focus();
+        return;
+    }
+
+    forgotPasswordButton.disabled = true;
+    try {
+        const redirectTo = `${window.location.origin}${window.location.pathname}`;
+        const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+        if (error) throw error;
+        showMessage("Si existe una cuenta con ese correo, recibirás un enlace para restablecer la contraseña.");
+    } catch (error) {
+        showMessage(`No se pudo enviar el enlace de recuperación: ${error.message}`, true);
+    } finally {
+        forgotPasswordButton.disabled = false;
+    }
+});
+
+recoveryForm.addEventListener("submit", async event => {
+    event.preventDefault();
+    showMessage("");
+    const button = recoveryForm.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+        const { data, error } = await supabase.auth.updateUser({
+            password: recoveryForm.elements.password.value
+        });
+        if (error) throw error;
+        if (!data.user) throw new Error("No se pudo comprobar la cuenta después de cambiar la contraseña.");
+        recoveryForm.reset();
+        setPasswordRecoveryMode(false);
+        if (await showDashboard(data.user)) {
+            showMessage("Contraseña actualizada correctamente.");
+        }
+    } catch (error) {
+        showMessage(`No se pudo actualizar la contraseña: ${error.message}`, true);
+    } finally {
+        button.disabled = false;
+    }
+});
+
+supabase.auth.onAuthStateChange(event => {
+    if (event === "PASSWORD_RECOVERY") {
+        setPasswordRecoveryMode(true);
+    }
+});
+
 document.querySelector("#sign-out").addEventListener("click", async () => {
     const { error } = await supabase.auth.signOut();
     if (error) {
@@ -397,20 +536,26 @@ requestForm.addEventListener("submit", async event => {
     event.preventDefault();
     showMessage("");
     const submitButton = requestForm.querySelector('button[type="submit"]');
-    const file = requestForm.elements.model.files[0];
+    const file = fileInput.files[0];
     const description = requestForm.elements.description.value.trim();
+    const quantity = Number(requestForm.elements.quantity.value);
 
     if (!file) {
         showMessage("Selecciona el archivo del modelo 3D.", true);
         return;
     }
-    const extension = file.name.split(".").pop().toLowerCase();
-    if (!allowedExtensions.has(extension)) {
-        showMessage("Formato no admitido. Usa STL, 3MF, OBJ, FBX, GLB, GLTF, STEP, STP, IGES, IGS, PLY, AMF, DAE o BLEND.", true);
+    const fileError = getFileValidationError(file);
+    if (fileError) {
+        showMessage(fileError, true);
         return;
     }
-    if (file.size > maxFileSize) {
-        showMessage("El archivo supera el límite de 50 MB.", true);
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 1000) {
+        showMessage("La cantidad debe ser un número entero entre 1 y 1000.", true);
+        return;
+    }
+    const desiredDate = requestForm.elements.desired_date.value;
+    if (desiredDate && desiredDate < localDateString()) {
+        showMessage("La fecha deseada no puede ser anterior a hoy.", true);
         return;
     }
 
@@ -433,7 +578,12 @@ requestForm.addEventListener("submit", async event => {
             user_id: user.id,
             model_path: uploadedPath,
             model_name: file.name,
-            description
+            description,
+            quantity,
+            dimensions: requestForm.elements.dimensions.value.trim() || null,
+            material: requestForm.elements.material.value || null,
+            color: requestForm.elements.color.value.trim() || null,
+            desired_date: desiredDate || null
         });
 
         if (insertError) {
@@ -445,6 +595,8 @@ requestForm.addEventListener("submit", async event => {
         }
 
         requestForm.reset();
+        selectedFileMessage.textContent = "Formatos 3D admitidos, hasta 50 MB.";
+        selectedFileMessage.classList.remove("field-help-error");
         const requestsLoaded = await showDashboard(user);
         if (requestsLoaded) {
             showMessage("Petición enviada. Te avisaremos aquí cuando tengamos tu presupuesto.");
@@ -457,6 +609,35 @@ requestForm.addEventListener("submit", async event => {
         submitButton.disabled = false;
     }
 });
+
+function getFileValidationError(file) {
+    const extension = file.name.split(".").pop().toLowerCase();
+    if (!allowedExtensions.has(extension)) {
+        return "Formato no admitido. Usa STL, 3MF, OBJ, FBX, GLB, GLTF, STEP, STP, IGES, IGS, PLY, AMF, DAE o BLEND.";
+    }
+    if (file.size > maxFileSize) {
+        return "El archivo supera el límite de 50 MB.";
+    }
+    return "";
+}
+
+fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    selectedFileMessage.classList.remove("field-help-error");
+    if (!file) {
+        selectedFileMessage.textContent = "Formatos 3D admitidos, hasta 50 MB.";
+        return;
+    }
+    const fileError = getFileValidationError(file);
+    if (fileError) {
+        selectedFileMessage.textContent = fileError;
+        selectedFileMessage.classList.add("field-help-error");
+        return;
+    }
+    selectedFileMessage.textContent = `${file.name} · ${(file.size / (1024 * 1024)).toFixed(2)} MB`;
+});
+
+requestForm.elements.desired_date.min = localDateString();
 
 async function sendQuote(event, form) {
     event.preventDefault();
@@ -478,8 +659,14 @@ async function sendQuote(event, form) {
             .eq("id", form.dataset.quoteForm);
         if (error) throw error;
         const user = await getAuthenticatedUser();
+        const notification = await sendCustomerEmailNotification(form.dataset.quoteForm);
         if (await showDashboard(user)) {
-            showMessage("Presupuesto enviado al panel del cliente.");
+            const message = notification.error
+                ? `Presupuesto guardado en el panel. El correo no se pudo enviar: ${notification.error}`
+                : notification.sent
+                    ? "Presupuesto enviado al panel y notificación por correo enviada."
+                    : "Presupuesto guardado en el panel, pero no se confirmó el envío del correo.";
+            showMessage(message, Boolean(notification.error || !notification.sent));
         }
     } catch (error) {
         showMessage(`No se pudo enviar el presupuesto: ${error.message}`, true);
@@ -533,6 +720,10 @@ async function updateStatus(event, form) {
     event.preventDefault();
     const button = form.querySelector('button[type="submit"]');
     const nextStatus = form.elements.status.value;
+    if (nextStatus === form.dataset.currentStatus) {
+        showMessage("La petición ya tiene ese estado.");
+        return;
+    }
     if (nextStatus === "completed" &&
         !window.confirm("¿Quieres finalizar este pedido y moverlo al historial?")) {
         return;
@@ -550,10 +741,21 @@ async function updateStatus(event, form) {
         });
         if (error) throw error;
         const user = await getAuthenticatedUser();
+        const notification = nextStatus === "pending"
+            ? { sent: false, error: "" }
+            : await sendCustomerEmailNotification(form.dataset.statusForm);
         if (await showDashboard(user)) {
-            showMessage(nextStatus === "completed"
+            const successMessage = nextStatus === "completed"
                 ? "Pedido finalizado y movido al historial."
-                : "Pedido marcado como en fabricación.");
+                : `Estado actualizado: ${statusLabels[nextStatus].toLowerCase()}.`;
+            const message = notification.error
+                ? `${successMessage} El correo no se pudo enviar: ${notification.error}`
+                : notification.sent
+                    ? `${successMessage} Notificación por correo enviada.`
+                    : nextStatus === "pending"
+                        ? successMessage
+                        : `${successMessage} No se confirmó el envío del correo.`;
+            showMessage(message, Boolean(notification.error || (nextStatus !== "pending" && !notification.sent)));
         }
     } catch (error) {
         showMessage(`No se pudo actualizar el pedido: ${error.message}`, true);
@@ -573,7 +775,10 @@ async function initialize() {
         showMessage(`No se pudo comprobar la sesión: ${error.message}`, true);
         return;
     }
-    if (data.session) {
+    const isRecoveryFlow = new URLSearchParams(window.location.hash.slice(1)).get("type") === "recovery";
+    if (isRecoveryFlow) {
+        setPasswordRecoveryMode(true);
+    } else if (data.session) {
         await showDashboard(data.session.user);
     }
 }

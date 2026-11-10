@@ -1,0 +1,1 @@
+cp -R Web/Html/. . && git add . && (git diff --cached --quiet || git commit -m "Actualiza web") && git pull --rebase origin main && git push origin main
