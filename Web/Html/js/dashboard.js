@@ -226,8 +226,8 @@ function requestCardMarkup(request, fileUrl, isAdmin) {
     const resendAdminNoticeButton = !isAdmin && ["accepted", "rejected"].includes(request.status)
         ? `<button class="button button-secondary resend-notice" type="button" data-notify-admin="${escapeHtml(request.id)}">Reenviar aviso al administrador</button>`
         : "";
-    const resendCustomerNoticeButton = isAdmin && request.status === "quoted"
-        ? `<button class="button button-secondary resend-notice" type="button" data-notify-customer="${escapeHtml(request.id)}">Reenviar presupuesto por correo</button>`
+    const resendCustomerNoticeButton = isAdmin && request.status !== "pending"
+        ? `<button class="button button-secondary resend-notice" type="button" data-notify-customer="${escapeHtml(request.id)}">Reenviar notificación por correo</button>`
         : "";
     const quoteForm = isAdmin && request.status === "pending"
         ? `<form class="quote-form" data-quote-form="${escapeHtml(request.id)}">
@@ -363,6 +363,11 @@ async function notifyRequestByEmail(requestId, event = "admin_update") {
             }
             if (typeof context?.message === "string") {
                 return { sent: false, error: context.message };
+            }
+            if (context && typeof context === "object") {
+                const contextType = context.constructor?.name ?? "respuesta";
+                const status = typeof context.status === "number" ? `, HTTP ${context.status}` : "";
+                return { sent: false, error: `${error.message} (${contextType}${status})` };
             }
         }
         return {
@@ -807,13 +812,13 @@ async function resendCustomerNotification(button) {
     try {
         const notification = await notifyRequestByEmail(button.dataset.notifyCustomer);
         showMessage(notification.sent
-            ? "Presupuesto reenviado por correo."
+            ? "Notificación reenviada por correo."
             : notification.error
-                ? `No se pudo reenviar el presupuesto: ${notification.error}`
-                : "No se confirmó el envío del presupuesto.",
+                ? `No se pudo reenviar la notificación: ${notification.error}`
+                : "No se confirmó el envío de la notificación.",
         !notification.sent);
     } catch (error) {
-        showMessage(`No se pudo reenviar el presupuesto: ${error instanceof Error ? error.message : String(error)}`, true);
+        showMessage(`No se pudo reenviar la notificación: ${error instanceof Error ? error.message : String(error)}`, true);
     } finally {
         button.disabled = false;
     }
