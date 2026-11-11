@@ -200,10 +200,21 @@ Deno.serve(async request => {
     }
 
     if (!resendResponse.ok) {
-        const providerError = await resendResponse.text();
-        console.error("Email provider rejected the notification.", resendResponse.status, providerError);
+        const providerBody = await resendResponse.json().catch(() => null);
+        const providerMessage = typeof providerBody?.message === "string"
+            ? providerBody.message.slice(0, 300)
+            : "";
+        const providerCode = typeof providerBody?.name === "string"
+            ? providerBody.name.slice(0, 80)
+            : "";
+        console.error("Email provider rejected the notification.", {
+            status: resendResponse.status,
+            code: providerCode || "unknown"
+        });
         return jsonResponse({
-            error: `The email provider rejected the message (HTTP ${resendResponse.status}). Check the Resend sender/domain settings.`
+            error: providerMessage
+                ? `Resend rechazó el correo (HTTP ${resendResponse.status}): ${providerMessage}`
+                : `Resend rechazó el correo (HTTP ${resendResponse.status}). Comprueba que el remitente pertenezca a un dominio verificado en la cuenta de esa API key.`
         }, 502);
     }
 
